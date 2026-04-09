@@ -1,0 +1,180 @@
+---
+title: "Build Data"
+format: html
+editor: visual
+---
+
+```{r}
+rm(list = ls())
+source("source.R")
+```
+
+## Load raw data
+
+```{r}
+# load Germany survey data
+DE <- read_csv("data_GER.csv", show_col_types = FALSE) %>%
+  readr::type_convert()
+```
+
+```{r}
+# load US/GB survey data
+US_GB <- read_csv("data_GB_US.csv", show_col_types = FALSE) %>%
+  readr::type_convert()
+```
+
+## Load item dictionary
+
+```{r}
+items <- read_delim("dalia_vars.csv", delim = ";", show_col_types = FALSE) %>%
+  janitor::clean_names() %>%
+  mutate(
+    # keep topic + concept as machine-readable strings
+    topic   = tolower(trimws(as.character(topic))),
+    concept = tolower(trimws(as.character(concept))),
+
+    # keep concept_summary only as a label (DO NOT overwrite concept)
+    concept_summary = trimws(as.character(concept_summary)),
+    concept_label   = dplyr::coalesce(dplyr::na_if(concept_summary, ""), concept),
+
+    # canonical item names
+    item = janitor::make_clean_names(trimws(as.character(item)))
+  )
+
+# Guardrails: surveys must match dictionary row count
+stopifnot(ncol(DE) == nrow(items))
+stopifnot(ncol(US_GB) == nrow(items))
+```
+
+## Rename columns and merge
+
+```{r}
+names(DE)    <- items$item
+names(US_GB) <- items$item
+
+data_all <- bind_rows(DE, US_GB)
+```
+
+## Recode country
+
+```{r}
+if (!("country_code" %in% names(data_all))) {
+  stop("country_code column not found in data_all")
+}
+
+data_all <- data_all %>%
+  mutate(
+    country_code = toupper(as.character(country_code)),
+    country_code = recode(country_code, "DE" = "GER", "UK" = "GB"),
+    country_code = factor(country_code, levels = c("GER", "GB", "US"))
+  )
+```
+
+## Define item groups
+
+```{r}
+accept_service_vars <- items %>% filter(topic == "acceptability_service")    %>% pull(item)
+accept_info_vars    <- items %>% filter(topic == "acceptability_information") %>% pull(item)
+accept_data_vars    <- items %>% filter(topic == "acceptability_data")        %>% pull(item)
+
+acceptability_vars <- c(accept_service_vars, accept_info_vars, accept_data_vars)
+
+privacy_vars <- "concern_privacy"
+
+stopifnot(length(acceptability_vars) > 0)
+stopifnot(all(acceptability_vars %in% names(data_all)))
+stopifnot(all(privacy_vars %in% names(data_all)))
+```
+
+## Ordered factors: acceptability and privacy
+
+```{r}
+levels_accept <- c(
+  "Not acceptable at all",
+  "Not very acceptable",
+  "Somewhat acceptable",
+  "Very acceptable"
+)
+
+data_all <- data_all %>%
+  mutate(across(all_of(acceptability_vars),
+                ~ factor(.x, levels = levels_accept, ordered = TRUE)))
+
+levels_privacy <- c(
+  "Not concerned at all",
+  "Not very concerned",
+  "Somewhat concerned",
+  "Very concerned"
+)
+
+data_all <- data_all %>%
+  mutate(across(all_of(privacy_vars),
+                ~ factor(.x, levels = levels_privacy, ordered = TRUE)))
+```
+
+## Demographics
+
+```{r}
+data_all <- data_all %>%
+  mutate(
+    age = as.integer(age),
+
+    # ensure gender is consistent
+    gender = tolower(as.character(gender)),
+
+    # education as ordered factor
+    education = ordered(education, levels = c("no", "low", "medium", "high")),
+
+    # collapsed into three levels for analysis
+    education_split = forcats::fct_collapse(
+      education,
+      low    = c("no", "low"),
+      medium = "medium",
+      high   = "high"
+    ) %>% ordered(levels = c("low", "medium", "high"))
+  )
+```
+
+## Political ideology
+
+```{r}
+data_all <- data_all %>%
+  mutate(
+    political = as.character(political),
+
+    # numeric 0-1 version (strip label text before converting)
+    political_num = (as.numeric(gsub(" .*", "", political)) - 1) / (7 - 1),
+
+    # collapsed into left / centre / right
+    political_split = forcats::fct_collapse(
+      political,
+      left   = c("1 (left-wing)", "2", "3"),
+      centre = "4 (center)",
+      right  = c("5", "6", "7 (right-wing)")
+    ) %>% ordered(levels = c("left", "centre", "right"))
+  )
+```
+
+## Save bundle
+
+```{r}
+if (!dir.exists("data")) dir.create("data")
+
+bundle <- list(
+  data_all            = data_all,
+  dict                = items,
+  acceptability_vars  = acceptability_vars,
+  accept_service_vars = accept_service_vars,
+  accept_info_vars    = accept_info_vars,
+  accept_data_vars    = accept_data_vars,
+  privacy_vars        = privacy_vars,
+  country_var         = "country_code"
+)
+
+saveRDS(bundle, "data/bundle.rds")
+
+cat("Saved bundle to data/bundle.rds\n")
+cat("N rows:", nrow(data_all), "\n")
+cat("Acceptability items:", length(acceptability_vars), "\n")
+cat("Privacy concern items:", length(privacy_vars), "\n")
+```
