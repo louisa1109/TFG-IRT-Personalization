@@ -1,0 +1,84 @@
+topic; item; concept; prompt; concept_summary
+demographics; age; age; NA; Age
+demographics; city_or_rural; city_or_rural; NA; City vs. rural
+demographics; country_code; country_code; NA; Country
+demographics; education; education_level; NA; Education
+demographics; gender; gender; NA; Gender
+system; UUID; UUID; NA; UUIS
+system; weight; Weight; NA; Weight
+terms_familiarity; ai; Artificial Intelligence; Which of the following terms are you familiar with (i.e., know more or less what they mean)?; NA
+terms_familiarity; algorithms; Computer algorithms; Which of the following terms are you familiar with (i.e., know more or less what they mean)?; NA
+terms_familiarity; ml; Machine learning; Which of the following terms are you familiar with (i.e., know more or less what they mean)?; NA
+terms_familiarity; RecSys; Recommender systems; Which of the following terms are you familiar with (i.e., know more or less what they mean)?; NA
+terms_familiarity; targeted; Targeted/personalised advertising; Which of the following terms are you familiar with (i.e., know more or less what they mean)?; NA
+terms_familiarity; terms_familiarity_none; None of the above; Which of the following terms are you familiar with (i.e., know more or less what they mean)?; NA
+used_applications; Facebook; Facebook; Which of the following applications have you used within the past year?; NA
+used_applications; Twitter; Twitter; Which of the following applications have you used within the past year?; NA
+used_applications; Instagram; Instagram; Which of the following applications have you used within the past year?; NA
+used_applications; Google; Google account; Which of the following applications have you used within the past year?; NA
+used_applications; Amazon; Amazon; Which of the following applications have you used within the past year?; NA
+used_applications; eBay; eBay; Which of the following applications have you used within the past year?; NA
+used_applications; used_applications_none; None of the above; Which of the following applications have you used within the past year?; NA
+ai_is_used; ads_social_media; Advertisement on social media; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; feed; Curation of news feeds on social media; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; webshops; Recommendations in webshops; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; video; Recommendations on video streaming sites; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; search; Ranking of results on search engines; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; assistants; Answers of smart assistants (e.g., Siri, Alexa, ...); In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; dating; Suggestions for potential partners on dating platforms; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; wikipedia; Content of Wikipedia articles; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; restaurants; Website of a local restaurant; In which of the following situations do you think AI technologies are commonly used?; NA
+ai_is_used; ai_is_used_none; None of the above; In which of the following situations do you think AI technologies are commonly used?; NA
+criteria_social_media; time; Time of posting; What do you think are the main criteria that are used to customize what posts you see?; NA
+criteria_social_media; likes; Number of likes the post received so far; What do you think are the main criteria that are used to customize what posts you see?; NA
+criteria_social_media; friends; Number of common friends that you share with post's author; What do you think are the main criteria that are used to customize what posts you see?; NA
+criteria_social_media; previous_interest; Topics and content that you have previously shown an interest in; What do you think are the main criteria that are used to customize what posts you see?; NA
+criteria_social_media; increase_likes; Recent increase in likes of the post; What do you think are the main criteria that are used to customize what posts you see?; NA
+criteria_social_media; clicks; Number of clicks on the post; What do you think are the main criteria that are used to customize what posts you see?; NA
+criteria_social_media; proximity; Geographic proximity between you and the post's author; What do you think are the main criteria that are used to customize what posts you see?; NA
+criteria_social_media; interact; The way you scroll and type; What do you think are the main criteria that are used to customize what posts you see?; NA
+acceptability_service; commercials; … show you personalised advertising of commercial products and services?; NA; Commercial advertising
+acceptability_service; political_campaigns; … show you personalised messages from political campaigns?; NA; Political campaign messages
+acceptability_service; personalised_events; … recommend events in your area?; NA; Recommending local events
+acceptability_service; Personalised_contacts; … recommend someone you might want to follow or add as a friend on social media?; NA; Recommending people on social media
+acceptability_service; Personalised_Locations; … suggest restaurants and shops?; NA; Recommending restaurants or shops
+acceptability_service; Personalised_Entertainment_Recommendations; … recommend movies or music?; NA; Recommending movies or music
+acceptability_service; Customised_Posts_Social_Media; … customise posts you see in your social media feed?; NA; Social media posts
+acceptability_service; Customised_Search_Results; … customize search results in search engines (e.g., Google search)?; NA; Search engine results
+acceptability_service; Customised_Newspapers; … customise front pages of online newspapers?; NA; Online newspapers front pages
+acceptability_information; info_age; Age?; NA; Age
+acceptability_information; info_gender; Gender?; NA; Gender
+acceptability_information; info_ethnicity; Ethnicity?; NA; Ethnicity
+acceptability_information; info_relationship_status; Relationship / marital status?; NA; Relationship/marital status
+acceptability_information; info_sexual_orientation; Sexual orientation?; NA; Sexual orientation
+acceptability_information; info_religion; Religious views?; NA; Religious views
+acceptability_information; info_politics; Political views?; NA; Political views
+acceptability_information; info_household_income; Household income?; NA; Household income
+acceptability_information; info_personality; Personality (e.g., outgoing, cautious, ...)?; NA; Personality
+acceptability_information; info_personal_events; Personal events in your life (e.g., pregnancy, marriage, …)?; NA; Personal events
+acceptability_information; info_personal_Tragedies; Personal tragedies in your life (e.g., death in the family, divorce, …)?; NA; Personal tragedies
+acceptability_data; search_history; Your browsing and search history?; NA; Browsing and search history
+acceptability_data; Purchasing_History; Your purchasing history?; NA; Purchasing history
+acceptability_data; Location_History; Your location history?; NA; Location history
+acceptability_data; Watched_Videos; Videos you have watched?; NA; Videos watched
+acceptability_data; typing_behaviour; Your typing and scrolling behaviour?; NA; Typing and scrolling behavior
+acceptability_data; online_interaction; Interaction with people online (with whom and how often you communicate)?; NA; Interaction with people online
+acceptability_data; email_messages_content; Content of your emails and online messages?; NA; Emails/online messages content
+acceptability_data; likes_shares; Your likes and shares on social media?; NA; Likes and shares on social media
+concern_privacy; concern_privacy; Concern about data privacy; How concerned are you, if at all, with your data privacy when using the Internet?; NA
+adjustment_online_data; Google_controls; My activity or Activity controls page on your Google account; Which of the following have you used in the last year to check and/or adjust what kind of data about you is currently used by internet companies?; Google activity
+adjustment_online_data; Google_privacy; Privacy and personalization page on your Google account; Which of the following have you used in the last year to check and/or adjust what kind of data about you is currently used by internet companies?; Google privacy and personalization
+adjustment_online_data; Facebook_privacy; Privacy settings page on Facebook; Which of the following have you used in the last year to check and/or adjust what kind of data about you is currently used by internet companies?; Facebook privacy
+adjustment_online_data; Facebook_ad_preferences; Manage your Ad preferences page on Facebook; Which of the following have you used in the last year to check and/or adjust what kind of data about you is currently used by internet companies?; Facebook ad preferences
+adjustment_online_data; Amazon_privacy; Privacy and/or personalization preferences on Amazon; Which of the following have you used in the last year to check and/or adjust what kind of data about you is currently used by internet companies?; Amazon privacy and/or personalization
+adjustment_online_data; browser_privacy; Privacy settings in your preferred browser; Which of the following have you used in the last year to check and/or adjust what kind of data about you is currently used by internet companies?; Browser privacy settings
+adjustment_online_data; adjustment_online_data_none; None of the above; Which of the following have you used in the last year to check and/or adjust what kind of data about you is currently used by internet companies?; NA
+privacy_tools; online_advertising; Software that protects you from seeing online advertising (e.g., Ad Blockers in your browser); Which of the following measures and tools do you usually use to protect your data privacy online?; Blocking online advertising
+privacy_tools; browser_incognito; Incognito mode in your Browser; Which of the following measures and tools do you usually use to protect your data privacy online?; Incognito browsing
+privacy_tools; monitored; Software that prevents your online activities from being monitored (e.g. Tor Browser, VPN); Which of the following measures and tools do you usually use to protect your data privacy online?; Avoiding online monitoring
+privacy_tools; search_privacy; Search engines that protect your privacy (e.g., DuckDuckGo); Which of the following measures and tools do you usually use to protect your data privacy online?; Privacy-respecting search engines
+privacy_tools; platforms_avoiding; Deliberately avoiding certain websites and platforms (e.g. Google, Facebook,...); Which of the following measures and tools do you usually use to protect your data privacy online?; Deliberately avoiding certain websites and platforms
+privacy_tools; platforms_settings; Adjusting privacy and ad settings on online platforms; Which of the following measures and tools do you usually use to protect your data privacy online?; NA
+privacy_tools; privacy_tools_none; None of the above; Which of the following measures and tools do you usually use to protect your data privacy online?; NA
+demographics; political; Political leaning; People sometimes use the labels left or left-wing and right or right-wing to describe political parties, party leaders, and political ideas. Where would you place yourself on this scale, which ranges from 1 (left-wing) to 4 (center) to 7 (right-wing)?; NA
+misc; comments; comments; Please feel free to share your thoughts on this survey and the topic.; NA
