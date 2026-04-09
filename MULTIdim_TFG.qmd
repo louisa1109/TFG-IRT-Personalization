@@ -1,0 +1,792 @@
+---
+title: "Multidimensional IRT Analysis"
+format: html
+editor: visual
+---
+
+```{r}
+source("source.R")
+```
+
+## Load Data
+
+```{r}
+bundle       <- readRDS("data/bundle.rds")
+data_all     <- bundle$data_all
+accept_vars  <- bundle$acceptability_vars
+service_vars <- bundle$accept_service_vars
+info_vars    <- bundle$accept_info_vars
+data_vars    <- bundle$accept_data_vars
+
+fit_grm <- readRDS("results/fit_grm.rds")
+
+data_irt <- data_all %>%
+  mutate(across(all_of(accept_vars), ~ as.numeric(.x))) %>%
+  rename(id = uuid) %>%
+  select(id, country_code, age, gender, education, all_of(accept_vars))
+
+data_complete <- data_irt %>%
+  filter(complete.cases(across(all_of(accept_vars))))
+
+items         <- data_complete %>% select(all_of(accept_vars)) %>% as.data.frame()
+group_country <- factor(data_complete$country_code)
+
+n_service <- length(service_vars)
+n_info    <- length(info_vars)
+n_data    <- length(data_vars)
+
+cat("Respondents:", nrow(data_complete), "| Items:", ncol(items), "\n")
+stopifnot(n_service + n_info + n_data == length(accept_vars))
+```
+
+## Model Specifications
+
+```{r}
+# 2D: Service vs combined Information + Data (intermediate model)
+model_2d <- mirt.model(paste0(
+  "Service  = 1-", n_service, "\n",
+  "InfoData = ", n_service + 1, "-", n_service + n_info + n_data, "\n",
+  "COV = Service*InfoData"
+))
+
+# 3D: simple structure — each item loads on exactly one dimension
+model_3d <- mirt.model(paste0(
+  "Service     = 1-", n_service, "\n",
+  "Information = ", n_service + 1, "-", n_service + n_info, "\n",
+  "Data        = ", n_service + n_info + 1, "-", n_service + n_info + n_data, "\n",
+  "COV = Service*Information*Data"
+))
+```
+
+## Fit Models
+
+```{r}
+fit_2d <- mirt(
+  data     = items,
+  model    = model_2d,
+  itemtype = "graded",
+  SE       = FALSE,
+  verbose  = FALSE
+)
+
+fit_3d <- mirt(
+  data     = items,
+  model    = model_3d,
+  itemtype = "graded",
+  SE       = TRUE,
+  verbose  = FALSE
+)
+```
+
+```{r}
+# 2D fit statistics
+fit_2d_stats <- M2(fit_2d)
+cat("2D FIT: RMSEA =", round(fit_2d_stats$RMSEA, 4),
+    " CFI =", round(fit_2d_stats$CFI, 4),
+    " TLI =", round(fit_2d_stats$TLI, 4), "\n")
+```
+
+## 1D vs 2D vs 3D Comparison
+
+```{r}
+fit_1d_stats <- M2(fit_grm)
+fit_3d_stats <- M2(fit_3d)
+
+cat("1D FIT: RMSEA =", round(fit_1d_stats$RMSEA, 4),
+    " CFI =", round(fit_1d_stats$CFI, 4),
+    " TLI =", round(fit_1d_stats$TLI, 4), "\n")
+
+cat("3D FIT: RMSEA =", round(fit_3d_stats$RMSEA, 4),
+    " CFI =", round(fit_3d_stats$CFI, 4),
+    " TLI =", round(fit_3d_stats$TLI, 4), "\n")
+```
+
+```{r}
+# AIC/BIC/logLik comparison
+dim_comparison <- data.frame(
+  Model  = c("1D GRM", "2D GRM", "3D GRM"),
+  AIC    = round(c(fit_grm@Fit$AIC, fit_2d@Fit$AIC, fit_3d@Fit$AIC), 1),
+  BIC    = round(c(fit_grm@Fit$BIC, fit_2d@Fit$BIC, fit_3d@Fit$BIC), 1),
+  logLik = round(c(fit_grm@Fit$logLik, fit_2d@Fit$logLik, fit_3d@Fit$logLik), 1)
+)
+
+print(dim_comparison)
+write.csv(dim_comparison, "results/comparison_1d_2d_3d.csv", row.names = FALSE)
+```
+
+```{r}
+# Likelihood ratio tests
+anova(fit_grm, fit_2d)  # 1D vs 2D
+anova(fit_2d,  fit_3d)  # 2D vs 3D
+```
+
+## 3D Model: Factor Structure
+
+```{r}
+summary(fit_3d)
+
+# Inter-dimension correlations
+cov_mat <- coef(fit_3d, simplify = TRUE)$cov
+sd_vec  <- sqrt(diag(cov_mat))
+cor_mat <- cov_mat / outer(sd_vec, sd_vec)
+rownames(cor_mat) <- colnames(cor_mat) <- c("Service", "Information", "Data")
+round(cor_mat, 3)
+write.csv(as.data.frame(cor_mat), "results/dimension_correlations.csv")
+```
+
+```{r}
+# Item discriminations per dimension
+params_3d    <- coef(fit_3d, simplify = TRUE)$items
+params_3d_df <- as.data.frame(params_3d) %>%
+  mutate(
+    item      = rownames(params_3d),
+    dimension = case_when(
+      item %in% service_vars ~ "Service",
+      item %in% info_vars    ~ "Information",
+      item %in% data_vars    ~ "Data"
+    ),
+    discrimination = case_when(
+      dimension == "Service"     ~ a1,
+      dimension == "Information" ~ a2,
+      dimension == "Data"        ~ a3
+    )
+  )
+```
+
+```{r}
+p_loadings <- ggplot(params_3d_df,
+                     aes(x = discrimination,
+                         y = reorder(item, discrimination),
+                         fill = dimension)) +
+  geom_col(alpha = 0.8) +
+  scale_fill_dimension() +
+  facet_wrap(~ dimension, scales = "free_y") +
+  labs(title = "Item Discriminations by Dimension (3D GRM)",
+       x = "Discrimination Parameter (a)", y = NULL) +
+  theme(legend.position = "none")
+
+print(p_loadings)
+ggsave("results/plot11_3d_loadings.pdf", p_loadings, width = 14, height = 8)
+```
+
+## Theta Scores
+
+```{r}
+theta_3d <- fscores(fit_3d, method = "EAP", full.scores = TRUE)
+
+data_complete$theta_service     <- theta_3d[, 1]
+data_complete$theta_information <- theta_3d[, 2]
+data_complete$theta_data        <- theta_3d[, 3]
+
+theta_3d_country <- data_complete %>%
+  group_by(country_code) %>%
+  summarise(
+    n           = n(),
+    service     = round(mean(theta_service), 3),
+    information = round(mean(theta_information), 3),
+    data        = round(mean(theta_data), 3)
+  )
+
+print(theta_3d_country)
+write.csv(theta_3d_country, "results/theta_3d_by_country.csv", row.names = FALSE)
+```
+
+```{r}
+# Boxplot by dimension and country
+theta_long <- data_complete %>%
+  select(country_code, theta_service, theta_information, theta_data) %>%
+  pivot_longer(starts_with("theta_"), names_to = "dimension", values_to = "theta") %>%
+  mutate(dimension = recode(dimension,
+    "theta_service"     = "Service",
+    "theta_information" = "Information",
+    "theta_data"        = "Data"
+  ))
+
+p_3d <- ggplot(theta_long, aes(x = country_code, y = theta, fill = country_code)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~ dimension) +
+  scale_fill_country() +
+  labs(title = "Latent Acceptance by Dimension and Country",
+       x = "Country", y = "\u03b8") +
+  theme(legend.position = "none")
+
+print(p_3d)
+ggsave("results/plot10_3d_by_country.pdf", p_3d, width = 12, height = 5)
+```
+
+## Item Characteristic Curves
+
+```{r}
+# Varies only the item's own dimension, holds others at 0
+theta_seq <- seq(-3, 3, by = 0.1)
+
+get_2d_icc <- function(item_num, dim_num) {
+  Theta            <- matrix(0, nrow = length(theta_seq), ncol = 3)
+  Theta[, dim_num] <- theta_seq
+  probs            <- probtrace(extract.item(fit_3d, item_num), Theta)
+  data.frame(theta = theta_seq,
+             cat1 = probs[,1], cat2 = probs[,2],
+             cat3 = probs[,3], cat4 = probs[,4],
+             item = accept_vars[item_num])
+}
+```
+
+```{r}
+plot_icc <- function(icc_data, title) {
+  icc_data %>%
+    pivot_longer(c(cat1, cat2, cat3, cat4),
+                 names_to = "category", values_to = "probability") %>%
+    mutate(category = recode(category,
+      "cat1" = "Not acceptable at all", "cat2" = "Not very acceptable",
+      "cat3" = "Somewhat acceptable",   "cat4" = "Very acceptable"
+    )) %>%
+    ggplot(aes(x = theta, y = probability, color = category)) +
+    geom_line(linewidth = 0.8) +
+    facet_wrap(~ item, ncol = 3) +
+    scale_colour_response() +
+    labs(title = title, x = "\u03b8", y = "Probability", color = NULL) +
+    theme(legend.position = "bottom")
+}
+```
+
+```{r}
+service_icc <- bind_rows(lapply(which(accept_vars %in% service_vars), get_2d_icc, dim_num = 1))
+info_icc    <- bind_rows(lapply(which(accept_vars %in% info_vars),    get_2d_icc, dim_num = 2))
+data_icc    <- bind_rows(lapply(which(accept_vars %in% data_vars),    get_2d_icc, dim_num = 3))
+
+print(plot_icc(service_icc, "ICC \u2014 Service Dimension"))
+print(plot_icc(info_icc,    "ICC \u2014 Information Dimension"))
+print(plot_icc(data_icc,    "ICC \u2014 Data Dimension"))
+```
+
+## Item Difficulty
+
+```{r}
+params_3d_irt    <- coef(fit_3d, IRTpars = TRUE, simplify = TRUE)$items
+params_3d_irt_df <- as.data.frame(params_3d_irt) %>%
+  mutate(
+    item      = rownames(params_3d_irt),
+    dimension = case_when(
+      item %in% service_vars ~ "Service",
+      item %in% info_vars    ~ "Information",
+      item %in% data_vars    ~ "Data"
+    )
+  )
+```
+
+```{r}
+# First threshold (b1), point size = discrimination
+p_difficulty <- ggplot(params_3d_irt_df, aes(x = b1, y = reorder(item, b1))) +
+  geom_point(aes(size = a1 + a2 + a3),
+             color = unname(palette_thesis["slate"]), alpha = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed",
+             color = unname(palette_thesis["rose"])) +
+  facet_wrap(~ dimension, scales = "free_y", ncol = 3) +
+  labs(title    = "Item Difficulty by Dimension (3D GRM)",
+       subtitle = "Point size = discrimination; b1 = first threshold",
+       x = "Difficulty (b1)", y = NULL, size = "Discrimination") +
+  theme(
+    axis.text.y = element_text(size = 10),
+    strip.text  = element_text(size = 12)
+  ) + 
+  theme(
+    axis.text.y  = element_text(size = 16),   # item names
+    axis.text.x  = element_text(size = 12),   # x axis numbers
+    axis.title.x = element_text(size = 16),   # "Difficulty (b1)"
+    strip.text   = element_text(size = 16),   # "Data", "Information", "Service"
+    plot.title   = element_text(size = 20),   # main title
+    plot.subtitle = element_text(size = 15),  # subtitle
+    legend.text  = element_text(size = 16),   # legend numbers
+    legend.title = element_text(size = 18)    # "Discrimination"
+  )
+  
+
+print(p_difficulty)
+ggsave("results/plot17_3d_difficulty.pdf", p_difficulty, width = 40, height = 10)
+```
+
+```{r}
+# All three thresholds per item
+params_3d_irt_df %>%
+  select(item, dimension, b1, b2, b3) %>%
+  pivot_longer(c(b1, b2, b3), names_to = "threshold", values_to = "difficulty") %>%
+  mutate(threshold = recode(threshold,
+    "b1" = "b1 (1\u21922)",
+    "b2" = "b2 (2\u21923)",
+    "b3" = "b3 (3\u21924)"
+  )) %>%
+  ggplot(aes(x = difficulty, y = reorder(item, difficulty),
+             color = threshold, shape = threshold)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  scale_colour_threshold() +
+  facet_wrap(~ dimension, scales = "free_y") +
+  labs(title    = "Item Threshold Hierarchy by Dimension (3D GRM)",
+       subtitle = "b1 = 1\u21922, b2 = 2\u21923, b3 = 3\u21924",
+       x = "Difficulty (threshold)", y = NULL,
+       color = "Threshold", shape = "Threshold") +
+  theme(legend.position = "bottom")
+```
+
+## Item Fit
+
+```{r}
+itemfit_3d <- itemfit(fit_3d)
+
+cat("Items with poor fit (p < .05):",
+    sum(itemfit_3d$p.S_X2 < 0.05, na.rm = TRUE),
+    "out of", length(accept_vars), "\n")
+cat("Max RMSEA.S_X2:", round(max(itemfit_3d$RMSEA.S_X2, na.rm = TRUE), 4), "\n")
+
+print(itemfit_3d[, c("item", "S_X2", "p.S_X2", "RMSEA.S_X2")])
+
+# Compare 1D vs 3D item fit
+if (exists("itemfit_stats")) {
+  fit_comparison <- data.frame(
+    item      = itemfit_3d$item,
+    RMSEA_1D  = round(itemfit_stats$RMSEA.S_X2, 4),
+    RMSEA_3D  = round(itemfit_3d$RMSEA.S_X2, 4),
+    dimension = case_when(
+      itemfit_3d$item %in% service_vars ~ "Service",
+      itemfit_3d$item %in% info_vars    ~ "Information",
+      itemfit_3d$item %in% data_vars    ~ "Data"
+    )
+  ) %>% mutate(improved = RMSEA_3D < RMSEA_1D)
+
+  cat("Items with improved fit in 3D vs 1D:",
+      sum(fit_comparison$improved, na.rm = TRUE), "\n")
+  write.csv(fit_comparison, "results/itemfit_1d_vs_3d.csv", row.names = FALSE)
+}
+```
+
+## Measurement Invariance
+
+```{r}
+# One anchor item per dimension (middle item)
+anchor_items <- c(
+  service_vars[ceiling(length(service_vars) / 2)],
+  info_vars[ceiling(length(info_vars) / 2)],
+  data_vars[ceiling(length(data_vars) / 2)]
+)
+cat("Anchor items:", paste(anchor_items, collapse = ", "), "\n")
+```
+
+```{r}
+mg_configural <- multipleGroup(
+  data       = items,
+  model      = model_3d,
+  group      = group_country,
+  itemtype   = "graded",
+  invariance = c("free_means", "free_var", anchor_items),
+  SE         = TRUE,
+  verbose    = FALSE
+)
+
+mg_metric <- multipleGroup(
+  data       = items,
+  model      = model_3d,
+  group      = group_country,
+  itemtype   = "graded",
+  invariance = c("free_means", "free_var", anchor_items, "slopes"),
+  SE         = FALSE,
+  verbose    = FALSE
+)
+
+mg_scalar <- multipleGroup(
+  data       = items,
+  model      = model_3d,
+  group      = group_country,
+  itemtype   = "graded",
+  invariance = c("free_means", "free_var", anchor_items, "slopes", "intercepts"),
+  SE         = FALSE,
+  verbose    = FALSE
+)
+
+inv_tests <- anova(mg_configural, mg_metric, mg_scalar)
+print(inv_tests)
+write.csv(as.data.frame(inv_tests), "results/mg_invariance_tests.csv", row.names = FALSE)
+```
+
+```{r}
+# Fit table and ΔAIC
+inv_fit_table <- data.frame(
+  Model  = c("Configural", "Metric", "Scalar"),
+  AIC    = round(inv_tests$AIC, 1),
+  BIC    = round(inv_tests$BIC, 1),
+  logLik = round(inv_tests$logLik, 1)
+)
+print(inv_fit_table)
+write.csv(inv_fit_table, "results/invariance_fit_table.csv", row.names = FALSE)
+
+aic_config_metric <- inv_fit_table$AIC[1] - inv_fit_table$AIC[2]
+aic_metric_scalar <- inv_fit_table$AIC[2] - inv_fit_table$AIC[3]
+
+cat("Config \u2192 Metric \u0394AIC:", round(aic_config_metric, 1), "\n")
+cat("Metric \u2192 Scalar \u0394AIC:", round(aic_metric_scalar, 1), "\n")
+
+if (abs(aic_config_metric) < 10) {
+  cat("\u2192 Metric invariance practically supported\n")
+} else {
+  cat("\u2192 Some discrimination differences across countries\n")
+}
+
+if (abs(aic_metric_scalar) < 10) {
+  cat("\u2192 Scalar invariance practically supported\n")
+} else if (abs(aic_metric_scalar) < 100) {
+  cat("\u2192 Partial non-invariance — comparisons meaningful but note limitations\n")
+} else {
+  cat("\u2192 Substantial non-invariance — interpret country comparisons cautiously\n")
+}
+```
+
+```{r}
+# Configural model global fit
+mg_fit <- M2(mg_configural)
+print(mg_fit)
+```
+
+## Differential Item Functioning (DIF)
+
+```{r}
+# Save multigroup models
+saveRDS(mg_configural, "results/mg_configural.rds")
+saveRDS(mg_metric,     "results/mg_metric.rds")
+saveRDS(mg_scalar,     "results/mg_scalar.rds")
+
+# Item-dimension lookup (reused across DIF sections)
+item_dim_lookup <- data.frame(
+  item      = c(service_vars, info_vars, data_vars),
+  dimension = c(rep("Service",     length(service_vars)),
+                rep("Information", length(info_vars)),
+                rep("Data",        length(data_vars)))
+)
+```
+
+### DIF from Configural Model
+
+```{r}
+cf        <- coef(mg_configural, simplify = TRUE)
+par_names <- colnames(cf[[1]]$items)
+which_par <- intersect(c("a1", "a2", "a3", "d1", "d2", "d3"), par_names)
+cat("Testing parameters:", paste(which_par, collapse = ", "), "\n")
+
+dif_results     <- DIF(mg_configural, which.par = which_par, scheme = "drop")
+dif_3d_tbl      <- as.data.frame(dif_results)
+dif_3d_tbl$item <- rownames(dif_3d_tbl)
+
+saveRDS(dif_3d_tbl, "results/dif_3d_tbl.rds")
+write.csv(dif_3d_tbl, "results/dif_3d_drop.csv", row.names = FALSE)
+```
+
+```{r}
+dif_with_dim <- dif_3d_tbl %>% left_join(item_dim_lookup, by = "item")
+
+if ("p" %in% names(dif_3d_tbl)) {
+  dif_3d_tbl$p_adj_fdr <- p.adjust(dif_3d_tbl$p, method = "fdr")
+}
+
+dif_tested <- dif_with_dim %>% filter(!is.na(p) & df > 0)
+
+cat("Items testable:", nrow(dif_tested), "\n")
+cat("Items with significant DIF (p < .05):", sum(dif_tested$p < 0.05), "\n")
+print(dif_tested[, c("item", "dimension", "X2", "df", "p")])
+```
+
+```{r}
+# DIF table for thesis
+dif_thesis_table <- dif_tested %>%
+  select(item, dimension, X2, df, p) %>%
+  mutate(X2 = round(X2, 2),
+         p  = formatC(p, format = "e", digits = 2))
+
+print(dif_thesis_table)
+write.csv(dif_with_dim,     "results/dif_3d_full.csv",      row.names = FALSE)
+write.csv(dif_thesis_table, "results/dif_thesis_table.csv", row.names = FALSE)
+```
+
+```{r}
+# Plot configural DIF
+dif_configural_plot <- dif_with_dim %>%
+  filter(!is.na(p) & df > 0) %>%
+  mutate(
+    significant = p < .05,
+    item_label  = gsub("_", " ", item),
+    item_label  = factor(item_label, levels = rev(item_label))
+  )
+
+p_dif_configural <- ggplot(dif_configural_plot,
+                aes(x = X2, y = item_label, fill = dimension, alpha = significant)) +
+  geom_col() +
+  geom_vline(xintercept = qchisq(0.95, df = 8),
+             linetype = "dashed", color = "red", linewidth = 0.7) +
+  scale_fill_dimension() +
+  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.35),
+                     labels = c("TRUE" = "Significant", "FALSE" = "n.s."),
+                     name = "") +
+  labs(title    = "DIF from Configural Model",
+       subtitle = "Only anchor items testable due to parameter constraints",
+       x = "\u03c7\u00b2 Statistic", y = NULL, fill = "Dimension") +
+  theme(legend.position = "bottom")
+
+print(p_dif_configural)
+ggsave("results/plot_dif_configural.pdf", p_dif_configural, width = 8, height = 4)
+```
+
+### DIF from Scalar Model
+
+```{r}
+cf_scalar <- coef(mg_scalar, simplify = TRUE)
+which_par <- intersect(c("a1", "a2", "a3", "d1", "d2", "d3"),
+                       colnames(cf_scalar[[1]]$items))
+
+dif_scalar     <- DIF(mg_scalar, which.par = which_par, scheme = "drop")
+dif_scalar_tbl <- as.data.frame(dif_scalar)
+dif_scalar_tbl$item <- rownames(dif_scalar_tbl)
+
+dif_scalar_tbl <- dif_scalar_tbl %>%
+  mutate(p_adj_fdr = p.adjust(p, method = "fdr")) %>%
+  left_join(item_dim_lookup, by = "item")
+
+dif_scalar_tested <- dif_scalar_tbl %>% filter(!is.na(p) & df > 0)
+
+cat("Items testable:", nrow(dif_scalar_tested), "\n")
+cat("Significant raw p < .05:", sum(dif_scalar_tested$p < .05, na.rm = TRUE), "\n")
+cat("Significant FDR p < .05:", sum(dif_scalar_tested$p_adj_fdr < .05, na.rm = TRUE), "\n")
+
+print(dif_scalar_tested %>% select(item, dimension, X2, df, p, p_adj_fdr))
+
+write.csv(dif_scalar_tbl,    "results/dif_from_scalar_full.csv",   row.names = FALSE)
+write.csv(dif_scalar_tested, "results/dif_from_scalar_tested.csv", row.names = FALSE)
+```
+
+```{r}
+# Plot scalar DIF
+dif_plot_data <- dif_scalar_tbl %>%
+  filter(!is.na(p) & df > 0) %>%
+  mutate(
+    significant = p < .05,
+    item_label  = gsub("_", " ", item),
+    item_label  = factor(item_label, levels = rev(item_label))
+  )
+
+p_dif <- ggplot(dif_plot_data,
+                aes(x = X2, y = item_label, fill = dimension, alpha = significant)) +
+  geom_col() +
+  geom_vline(xintercept = qchisq(0.95, df = 8),
+             linetype = "dashed", color = "red", linewidth = 0.7) +
+  scale_fill_dimension() +
+  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.35),
+                     labels = c("TRUE" = "Significant", "FALSE" = "n.s."),
+                     name = "") +
+  labs(title    = "Differential Item Functioning by Item",
+       subtitle = "Red dashed line = \u03c7\u00b2 critical value (df = 8, p = .05)",
+       x = "\u03c7\u00b2 Statistic", y = NULL, fill = "Dimension") +
+  theme(legend.position = "bottom")
+
+print(p_dif)
+ggsave("results/plot_dif_scalar.pdf", p_dif, width = 10, height = 10)
+```
+
+```{r}
+# Country deviations heatmap
+cf_scalar_coefs <- coef(mg_scalar, simplify = TRUE)
+
+country_params <- lapply(names(cf_scalar_coefs)[1:3], function(grp) {
+  df <- as.data.frame(cf_scalar_coefs[[grp]]$items)
+  df$item    <- rownames(df)
+  df$country <- grp
+  df
+}) %>% bind_rows() %>%
+  left_join(item_dim_lookup %>% select(item, dimension), by = "item") %>%
+  mutate(discrimination = case_when(
+    dimension == "Service"     ~ a1,
+    dimension == "Information" ~ a2,
+    dimension == "Data"        ~ a3
+  ))
+
+country_params_heat <- country_params %>%
+  group_by(item, dimension) %>%
+  mutate(deviation = discrimination - mean(discrimination))
+
+p_dif_heat <- ggplot(country_params_heat,
+                     aes(x = country, y = reorder(item, discrimination),
+                         fill = deviation)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low  = unname(palette_thesis["rose"]),
+                       mid  = "white",
+                       high = unname(palette_thesis["teal"]),
+                       midpoint = 0) +
+  facet_wrap(~ dimension, scales = "free_y") +
+  labs(title    = "Country Deviations in Item Discrimination",
+       subtitle = "Blue = higher than average, Red = lower than average",
+       x = "Country", y = NULL, fill = "Deviation") +
+  theme(legend.position = "bottom")
+
+print(p_dif_heat)
+ggsave("results/plot_dif_country_heatmap.pdf", p_dif_heat, width = 12, height = 10)
+```
+
+### Slope vs Threshold DIF
+
+```{r}
+# Slope DIF: tests whether discrimination differs across countries
+dif_slope     <- DIF(mg_scalar, which.par = c("a1", "a2", "a3"), scheme = "drop")
+dif_slope_tbl <- as.data.frame(dif_slope)
+dif_slope_tbl$item <- rownames(dif_slope_tbl)
+
+dif_slope_tbl <- dif_slope_tbl %>%
+  mutate(p_fdr = p.adjust(p, method = "fdr")) %>%
+  left_join(item_dim_lookup, by = "item")
+
+cat("Slope DIF testable:", sum(!is.na(dif_slope_tbl$p) & dif_slope_tbl$df > 0), "\n")
+cat("Significant raw p < .05:", sum(dif_slope_tbl$p < .05, na.rm = TRUE), "\n")
+cat("Significant FDR p < .05:", sum(dif_slope_tbl$p_fdr < .05, na.rm = TRUE), "\n")
+
+print(dif_slope_tbl %>%
+        filter(!is.na(p) & df > 0) %>%
+        select(item, dimension, X2, df, p, p_fdr) %>%
+        arrange(p_fdr))
+
+write.csv(dif_slope_tbl, "results/dif_slope.csv", row.names = FALSE)
+```
+
+```{r}
+# Threshold DIF: tests whether thresholds differ across countries
+dif_threshold <- DIF(
+  mg_scalar,
+  which.par = c("d1", "d2", "d3"),
+  scheme    = "drop",
+  technical = list(NCYCLES = 200),
+  parallel  = TRUE
+)
+
+dif_thresh_tbl <- as.data.frame(dif_threshold)
+dif_thresh_tbl$item <- rownames(dif_thresh_tbl)
+
+dif_thresh_tbl <- dif_thresh_tbl %>%
+  mutate(p_fdr = p.adjust(p, method = "fdr")) %>%
+  left_join(item_dim_lookup, by = "item")
+
+cat("Threshold DIF testable:", sum(!is.na(dif_thresh_tbl$p) & dif_thresh_tbl$df > 0), "\n")
+cat("Significant raw p < .05:", sum(dif_thresh_tbl$p < .05, na.rm = TRUE), "\n")
+cat("Significant FDR p < .05:", sum(dif_thresh_tbl$p_fdr < .05, na.rm = TRUE), "\n")
+
+print(dif_thresh_tbl %>%
+        filter(!is.na(p) & df > 0) %>%
+        select(item, dimension, X2, df, p, p_fdr) %>%
+        arrange(p_fdr))
+
+write.csv(dif_thresh_tbl, "results/dif_threshold.csv", row.names = FALSE)
+```
+
+```{r}
+# Combined DIF summary table
+dif_summary <- dif_slope_tbl %>%
+  select(item, dimension, X2_slope = X2, df_slope = df,
+         p_slope = p, p_slope_fdr = p_fdr) %>%
+  left_join(
+    dif_thresh_tbl %>%
+      select(item, X2_thresh = X2, df_thresh = df,
+             p_thresh = p, p_thresh_fdr = p_fdr),
+    by = "item"
+  ) %>%
+  mutate(
+    slope_sig  = ifelse(!is.na(p_slope_fdr)  & df_slope  > 0 & p_slope_fdr  < .05, "Yes", "No"),
+    thresh_sig = ifelse(!is.na(p_thresh_fdr) & df_thresh > 0 & p_thresh_fdr < .05, "Yes", "No")
+  )
+
+cat("Slope DIF significant (FDR):",    sum(dif_summary$slope_sig  == "Yes", na.rm = TRUE), "\n")
+cat("Threshold DIF significant (FDR):", sum(dif_summary$thresh_sig == "Yes", na.rm = TRUE), "\n")
+
+print(dif_summary %>% select(item, dimension, slope_sig, thresh_sig))
+write.csv(dif_summary, "results/dif_summary_table.csv", row.names = FALSE)
+```
+
+```{r}
+# Plot slope DIF (most critical form)
+dif_slope_plot <- dif_slope_tbl %>%
+  filter(!is.na(p) & df > 0) %>%
+  mutate(
+    significant = p_fdr < .05,
+    item_label  = gsub("_", " ", item),
+    item_label  = factor(item_label, levels = rev(item_label))
+  )
+
+p_dif_slope <- ggplot(dif_slope_plot,
+                      aes(x = X2, y = item_label, fill = dimension, alpha = significant)) +
+  geom_col() +
+  geom_vline(xintercept = qchisq(0.95, df = 3),
+             linetype = "dashed", color = "red", linewidth = 0.7) +
+  scale_fill_dimension() +
+  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.35),
+                     labels = c("TRUE" = "Significant", "FALSE" = "n.s."),
+                     name = "") +
+  labs(title    = "Slope DIF by Item (Discrimination Parameters)",
+       subtitle = "Red dashed line = \u03c7\u00b2 critical value (df = 3, p = .05)\nFaded = non-significant after FDR correction",
+       x = "\u03c7\u00b2 Statistic", y = NULL, fill = "Dimension") +
+  theme(legend.position = "bottom")
+
+print(p_dif_slope)
+ggsave("results/plot_dif_slope.pdf", p_dif_slope, width = 10, height = 10)
+```
+
+## Save Final Dataset
+
+```{r}
+theta_1d <- read.csv("results/data_with_theta.csv") %>% select(uuid, theta_grm)
+
+final_data <- data_all %>%
+  left_join(
+    data_complete %>%
+      select(id, theta_service, theta_information, theta_data) %>%
+      rename(uuid = id),
+    by = "uuid"
+  ) %>%
+  left_join(theta_1d, by = "uuid")
+
+saveRDS(final_data, "results/data_final_all_thetas.rds")
+write.csv(final_data, "results/data_final_all_thetas.csv", row.names = FALSE)
+saveRDS(fit_2d, "results/fit_2d.rds")
+saveRDS(fit_3d, "results/fit_3d.rds")
+
+cat("Theta columns:", paste(grep("theta", names(final_data), value = TRUE), collapse = ", "), "\n")
+cat("Rows:", nrow(final_data), "\n")
+```
+
+## Summary
+
+```{r}
+cat("MODEL FIT:\n")
+cat("  1D RMSEA =", round(fit_1d_stats$RMSEA, 3),
+    " CFI =", round(fit_1d_stats$CFI, 3), "\n")
+cat("  3D RMSEA =", round(fit_3d_stats$RMSEA, 3),
+    " CFI =", round(fit_3d_stats$CFI, 3), "\n\n")
+
+cat("DIMENSION CORRELATIONS:\n")
+print(round(cor_mat, 3))
+
+cat("\nCOUNTRY THETA MEANS (3D):\n")
+print(theta_3d_country)
+
+cat("\nMEASUREMENT INVARIANCE:\n")
+cat("  Config \u2192 Metric \u0394AIC:", round(aic_config_metric, 1), "\n")
+cat("  Metric \u2192 Scalar \u0394AIC:", round(aic_metric_scalar, 1), "\n\n")
+
+cat("DIF:\n")
+cat("  Slope significant (FDR):",    sum(dif_summary$slope_sig  == "Yes", na.rm = TRUE), "\n")
+cat("  Threshold significant (FDR):", sum(dif_summary$thresh_sig == "Yes", na.rm = TRUE), "\n\n")
+
+cat("ITEM FIT:\n")
+cat("  Max RMSEA.S_X2:",
+    round(max(itemfit_3d$RMSEA.S_X2, na.rm = TRUE), 4), "\n")
+```
+
+```{r}
+# Package versions for reproducibility
+R.version.string
+packageVersion("mirt")
+packageVersion("psych")
+packageVersion("dplyr")
+packageVersion("ggplot2")
+```

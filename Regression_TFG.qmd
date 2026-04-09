@@ -1,0 +1,216 @@
+---
+title: "Regression Analysis"
+format: html
+editor: visual
+---
+
+```{r}
+source("source.R")
+```
+
+## Load Data
+
+```{r}
+final_data <- readRDS("results/data_final_all_thetas.rds")
+```
+
+## Prepare Variables
+
+```{r}
+awareness_vars <- c("ai", "algorithms", "ml", "rec_sys", "targeted")
+awareness_vars <- awareness_vars[awareness_vars %in% names(final_data)]
+
+behavior_vars <- c("google_controls", "google_privacy", "facebook_privacy",
+                   "online_advertising", "browser_incognito",
+                   "platforms_avoiding", "platforms_settings")
+behavior_vars <- behavior_vars[behavior_vars %in% names(final_data)]
+
+final_data <- final_data %>%
+  mutate(
+    concern_num           = as.numeric(concern_privacy),
+    country_code          = factor(country_code, levels = c("GB", "GER", "US")),
+    across(all_of(awareness_vars), ~ as.numeric(.x == TRUE)),
+    algorithmic_awareness = rowSums(across(all_of(awareness_vars)), na.rm = TRUE),
+    across(all_of(behavior_vars),  ~ as.numeric(.x == TRUE)),
+    privacy_behavior      = rowSums(across(all_of(behavior_vars)),  na.rm = TRUE),
+    age_num               = as.numeric(age),
+    gender_bin            = as.numeric(tolower(as.character(gender)) %in% c("female", "woman")),
+    education_num         = as.numeric(education)
+  )
+```
+
+## Regression Models
+
+```{r}
+# a) Unidimensional OLS: overall acceptance (1D theta)
+m_overall <- lm(
+  theta_grm ~ concern_num + algorithmic_awareness + privacy_behavior +
+              country_code + age_num + gender_bin + education_num,
+  data = final_data, na.action = na.omit
+)
+```
+
+```{r}
+# b) Multivariate OLS: all three dimensions jointly
+# cbind() fits one equation per outcome with a shared predictor set
+reg_data <- final_data %>%
+  filter(complete.cases(theta_service, theta_information, theta_data,
+                        concern_num, algorithmic_awareness, privacy_behavior,
+                        country_code, age_num, gender_bin, education_num))
+
+m_multi <- lm(
+  cbind(theta_service, theta_information, theta_data) ~
+    concern_num + algorithmic_awareness + privacy_behavior +
+    country_code + age_num + gender_bin + education_num,
+  data = reg_data
+)
+```
+
+## Results
+
+```{r}
+cat("=== OVERALL (1D) ===\n")
+print(summary(m_overall))
+
+cat("\n=== SERVICE ===\n")
+print(summary(m_multi)$"Response theta_service")
+
+cat("\n=== INFORMATION ===\n")
+print(summary(m_multi)$"Response theta_information")
+
+cat("\n=== DATA ===\n")
+print(summary(m_multi)$"Response theta_data")
+
+cat("\n=== MANOVA (Pillai) ===\n")
+print(summary(manova(m_multi), test = "Pillai"))
+```
+
+## Coefficient Table
+
+```{r}
+focal_terms <- c("concern_num", "algorithmic_awareness", "privacy_behavior",
+                 "country_codeGER", "country_codeUS")
+
+tidy_all <- bind_rows(
+  tidy(m_overall) %>% mutate(outcome = "Overall (1D)"),
+  tidy(m_multi)   %>% mutate(outcome = recode(response,
+    "theta_service"     = "Service (3D)",
+    "theta_information" = "Information (3D)",
+    "theta_data"        = "Data (3D)"))
+) %>%
+  filter(term %in% focal_terms) %>%
+  mutate(
+    stars = case_when(
+      p.value < .001 ~ "***", p.value < .01 ~ "**",
+      p.value < .05  ~ "*",   TRUE ~ ""
+    ),
+    label = paste0(round(estimate, 3), stars)
+  )
+```
+
+```{r}
+# Wide format table
+wide_table <- tidy_all %>%
+  select(outcome, term, label) %>%
+  tidyr::pivot_wider(names_from = outcome, values_from = label)
+
+print(wide_table)
+write.csv(tidy_all, "results/regression_combined.csv", row.names = FALSE)
+```
+
+## Coefficient Plot
+
+```{r}
+plot_data <- tidy_all %>%
+  filter(term %in% c("concern_num", "algorithmic_awareness", "privacy_behavior")) %>%
+  mutate(
+    term = recode(term,
+      "concern_num"           = "Privacy Concern",
+      "algorithmic_awareness" = "Algorithmic Awareness",
+      "privacy_behavior"      = "Privacy Behavior"
+    ),
+    outcome = factor(outcome,
+      levels = c("Overall (1D)", "Service (3D)", "Information (3D)", "Data (3D)"))
+  )
+
+p_reg <- ggplot(plot_data,
+                aes(x = estimate, y = outcome, color = outcome,
+                    alpha = p.value < 0.05)) +
+  geom_point(size = 3) +
+  geom_errorbarh(aes(xmin = estimate - 1.96 * std.error,
+                     xmax = estimate + 1.96 * std.error),
+                 height = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~ term, scales = "free_x", nrow = 1) +
+  scale_colour_manual(values = c(
+    "Overall (1D)"     = unname(palette_thesis["slate"]),
+    "Service (3D)"     = unname(palette_thesis["teal"]),
+    "Information (3D)" = unname(palette_thesis["mauve"]),
+    "Data (3D)"        = unname(palette_thesis["sand"])
+  )) +
+  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.30),
+                     labels = c("TRUE" = "p < .05", "FALSE" = "n.s."), name = "") +
+  labs(title   = "Regression Coefficients Across Acceptance Dimensions",
+       caption = "Error bars = 95% CI. Faded = non-significant.",
+       x = "Coefficient (\u03b2)", y = NULL, color = "Outcome") +
+  theme(legend.position = "bottom")
+
+print(p_reg)
+ggsave("results/plot_regression_coefficients.pdf", p_reg, width = 13, height = 6)
+```
+
+## R-squared
+
+```{r}
+r2_table <- data.frame(
+  outcome = c("Overall (1D)", "Service (3D)", "Information (3D)", "Data (3D)"),
+  r2      = c(
+    summary(m_overall)$r.squared,
+    summary(m_multi)$"Response theta_service"$r.squared,
+    summary(m_multi)$"Response theta_information"$r.squared,
+    summary(m_multi)$"Response theta_data"$r.squared
+  )
+)
+
+print(r2_table)
+write.csv(r2_table, "results/regression_r2.csv", row.names = FALSE)
+```
+
+## Save Full Coefficients
+
+```{r}
+bind_rows(
+  tidy(m_overall) %>% mutate(outcome = "Overall (1D)"),
+  tidy(m_multi)   %>% mutate(outcome = recode(response,
+    "theta_service"     = "Service (3D)",
+    "theta_information" = "Information (3D)",
+    "theta_data"        = "Data (3D)"))
+) %>% write.csv("results/regression_full_coefficients.csv", row.names = FALSE)
+```
+
+## OLS Assumption Checks
+
+```{r}
+# Diagnostic plots for 1D model
+pdf("results/plot_ols_diagnostics_1D.pdf", width = 10, height = 8)
+par(mfrow = c(2, 2))
+plot(m_overall)
+par(mfrow = c(1, 1))
+dev.off()
+
+par(mfrow = c(2, 2))
+plot(m_overall)
+par(mfrow = c(1, 1))
+```
+
+```{r}
+# Diagnostic plots for each 3D outcome
+for (outcome in c("theta_service", "theta_information", "theta_data")) {
+  formula <- as.formula(paste(outcome,
+    "~ concern_num + algorithmic_awareness + privacy_behavior +
+       country_code + age_num + gender_bin + education_num"))
+  par(mfrow = c(2, 2))
+  plot(lm(formula, data = reg_data), main = outcome)
+  par(mfrow = c(1, 1))
+}
+```

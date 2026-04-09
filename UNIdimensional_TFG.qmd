@@ -1,0 +1,425 @@
+---
+title: "Unidimensional IRT"
+format: html
+editor: visual
+---
+
+```{r}
+source("source.R")
+```
+
+## Load Data
+
+```{r}
+bundle <- readRDS("data/bundle.rds")
+
+data_all    <- bundle$data_all
+accept_vars <- bundle$acceptability_vars
+
+cat("Total respondents:", nrow(data_all), "\n")
+cat("Acceptability items:", length(accept_vars), "\n")
+cat("Countries:", paste(unique(data_all$country_code), collapse = ", "), "\n")
+```
+
+```{r}
+#just to check which column names are here:
+cat("Columns in data_all:\n")
+print(names(data_all))
+cat("\n")
+```
+
+## Prepare IRT Data
+
+```{r}
+# Convert ordered factors to numeric (1-4) and select relevant columns
+data_irt <- data_all %>%
+  mutate(across(all_of(accept_vars), ~ as.numeric(.x))) %>%
+  rename(id = uuid) %>%
+  select(id, country_code, age, gender, education, all_of(accept_vars))
+
+# Keep only complete cases
+data_complete <- data_irt %>%
+  filter(complete.cases(across(all_of(accept_vars))))
+
+cat("Complete cases:", nrow(data_complete), "\n")
+cat("Retention rate:", round(100 * nrow(data_complete) / nrow(data_all), 1), "%\n")
+```
+
+```{r}
+# Item matrix for IRT
+items <- data_complete %>%
+  select(all_of(accept_vars)) %>%
+  as.data.frame()
+```
+
+## Descriptive Statistics
+
+```{r}
+# Response distribution
+response_summary <- items %>%
+  pivot_longer(everything()) %>%
+  count(value) %>%
+  mutate(percent = round(100 * n / sum(n), 1))
+print(response_summary)
+```
+
+```{r}
+# Item means
+item_means <- colMeans(items, na.rm = TRUE)
+
+cat("Most acceptable items:\n")
+print(round(sort(item_means, decreasing = TRUE)[1:5], 2))
+
+cat("\nLeast acceptable items:\n")
+print(round(sort(item_means, decreasing = FALSE)[1:5], 2))
+```
+
+```{r}
+# Polychoric inter-item correlations
+poly_cor <- psych::polychoric(items)$rho
+
+cat("Mean inter-item correlation:", round(mean(poly_cor[lower.tri(poly_cor)]), 3), "\n")
+cat("Range:", round(min(poly_cor[lower.tri(poly_cor)]), 3),
+    "to", round(max(poly_cor[lower.tri(poly_cor)]), 3), "\n")
+```
+
+## Model 1: Graded Response Model (GRM)
+
+```{r}
+fit_grm <- mirt(
+  data     = items,
+  model    = 1,
+  itemtype = "graded",
+  SE       = TRUE,
+  verbose  = FALSE
+)
+```
+
+```{r}
+# Global model fit
+fit_stats <- M2(fit_grm)
+
+cat("\nMODEL FIT STATISTICS:\n")
+cat("M2 =", round(fit_stats$M2, 2), "\n")
+cat("p-value =", round(fit_stats$p, 4), "\n")
+cat("RMSEA =", round(fit_stats$RMSEA, 4), "\n")
+cat("CFI =", round(fit_stats$CFI, 4), "\n")
+cat("TLI =", round(fit_stats$TLI, 4), "\n\n")
+```
+
+## Item Parameters
+
+```{r}
+# Extract IRT-parameterised coefficients
+params         <- coef(fit_grm, IRTpars = TRUE, simplify = TRUE)
+item_params    <- as.data.frame(params$items)
+
+cat("Discrimination (a): range", round(min(item_params$a), 2),
+    "to", round(max(item_params$a), 2),
+    "| mean", round(mean(item_params$a), 2), "\n")
+
+cat("First threshold (b1): range", round(min(item_params$b1), 2),
+    "to", round(max(item_params$b1), 2),
+    "| mean", round(mean(item_params$b1), 2), "\n")
+```
+
+```{r}
+# Full parameter table
+head(item_params, 28)
+```
+
+```{r}
+# Save parameters
+if (!dir.exists("results")) dir.create("results")
+write.csv(item_params, "results/grm_parameters.csv", row.names = TRUE)
+write.csv(fit_stats,   "results/grm_fit.csv",        row.names = FALSE)
+```
+
+```{r}
+# Extreme item parameters
+cat("Highest discrimination (a > 2.0):\n")
+print(rownames(item_params[item_params$a > 2.0, ]))
+
+cat("\nLowest discrimination (a < 1.0):\n")
+print(rownames(item_params[item_params$a < 1.0, ]))
+
+cat("\nEasiest items (b1 < -0.5):\n")
+print(rownames(item_params[item_params$b1 < -0.5, ]))
+
+cat("\nHardest items (b1 > 1.0):\n")
+print(rownames(item_params[item_params$b1 > 1.0, ]))
+```
+
+## Item Fit
+
+```{r}
+itemfit_stats <- itemfit(fit_grm)
+
+poor_fit <- sum(itemfit_stats$p.S_X2 < 0.05, na.rm = TRUE)
+cat("Items with poor fit (p < .05):", poor_fit, "out of", length(accept_vars), "\n")
+cat("Max RMSEA.S_X2:", round(max(itemfit_stats$RMSEA.S_X2, na.rm = TRUE), 4), "\n")
+
+print(itemfit_stats[, c("item", "S_X2", "RMSEA.S_X2")])
+```
+
+```{r}
+itemfit_stats <- itemfit(fit_grm)
+
+poor_fit <- sum(itemfit_stats$p.S_X2 < 0.05, na.rm = TRUE)
+cat("Items with poor fit (p < .05):", poor_fit, "out of", length(accept_vars), "\n")
+cat("Max RMSEA.S_X2:", round(max(itemfit_stats$RMSEA.S_X2, na.rm = TRUE), 4), "\n")
+
+print(itemfit_stats[, c("item", "S_X2", "p.S_X2","RMSEA.S_X2")])
+
+#p.S_X2 is how many items statistically misfit BUT with N = 3216 almost all will be significant
+#RMSEA.S_X2 is the practical misfit, and only 0.017
+```
+
+## Person Fit
+
+```{r}
+personfit_stats <- personfit(fit_grm)
+
+poor_person_fit <- mean(abs(personfit_stats$z.infit) > 1.96)
+cat("Proportion with poor person fit:", round(100 * poor_person_fit, 1), "%\n")
+```
+
+## Theta Scores
+
+```{r}
+# Extract EAP theta scores
+theta_grm            <- fscores(fit_grm, method = "EAP", full.scores = TRUE)
+data_complete$theta_grm <- theta_grm[, 1]
+
+cat("Mean:", round(mean(data_complete$theta_grm), 3), "\n")
+cat("SD:  ", round(sd(data_complete$theta_grm), 3), "\n")
+cat("Range:", round(min(data_complete$theta_grm), 2),
+    "to", round(max(data_complete$theta_grm), 2), "\n")
+```
+
+```{r}
+# Theta by country
+theta_by_country <- data_complete %>%
+  group_by(country_code) %>%
+  summarise(
+    n    = n(),
+    mean = round(mean(theta_grm), 3),
+    sd   = round(sd(theta_grm), 3)
+  )
+
+print(theta_by_country)
+write.csv(theta_by_country, "results/theta_by_country.csv", row.names = FALSE)
+```
+
+```{r}
+# ANOVA: country differences in theta
+anova_result <- aov(theta_grm ~ country_code, data = data_complete)
+summary(anova_result)
+```
+
+```{r}
+# Eta-squared: proportion of variance explained by country
+ss        <- summary(anova_result)[[1]]
+eta_sq    <- ss["country_code", "Sum Sq"] / sum(ss[, "Sum Sq"])
+cat("Eta-squared:", round(eta_sq, 3), "\n")
+
+# 4% of variance
+```
+
+## Plots
+
+```{r}
+# Plot 1: Item Information Curves
+p1 <- itemInfoPlot(fit_grm, facet = TRUE) +
+  labs(title = "Item Information Curves")
+print(p1)
+ggsave("results/plot1_item_information.pdf", p1, width = 12, height = 10)
+```
+
+```{r}
+# Plot 2: Test Information Function
+pdf("results/plot2_test_information.pdf", width = 10, height = 6)
+plot(fit_grm, type = "info", main = "Test Information Function")
+dev.off()
+plot(fit_grm, type = "info", main = "Test Information Function")
+```
+
+```{r}
+# Plot 3: Item Characteristic Curves
+p3 <- tracePlot(fit_grm, facet = TRUE) +
+  labs(title = "Item Characteristic Curves")
+print(p3)
+ggsave("results/plot3_item_curves.pdf", p3, width = 14, height = 10)
+```
+
+```{r}
+# Plot 4: Wright Map
+params_irt      <- coef(fit_grm, IRTpars = TRUE, simplify = TRUE)$items
+item_params_irt <- as.data.frame(params_irt)
+
+threshold_data <- data.frame(
+  item      = rep(rownames(item_params_irt), 3),
+  threshold = c(item_params_irt$b1, item_params_irt$b2, item_params_irt$b3),
+  category  = rep(c("b1 (1\u21922)", "b2 (2\u21923)", "b3 (3\u21924)"),
+                  each = nrow(item_params_irt))
+)
+
+p4_wright <- ggplot() +
+  geom_histogram(
+    data  = data_complete,
+    aes(x = theta_grm, y = after_stat(density)),
+    fill  = unname(palette_thesis["teal"]),
+    color = "white", alpha = 0.6, bins = 40
+  ) +
+  geom_point(
+    data = threshold_data,
+    aes(x = threshold, y = -0.05, color = category, shape = category),
+    size = 2.5, alpha = 0.9
+  ) +
+  geom_hline(yintercept = 0, color = "gray40", linewidth = 0.4) +
+  scale_colour_threshold() +
+  labs(
+    title  = "Wright Map: Person Distribution and Item Thresholds",
+    x      = "Latent Acceptance (\u03b8)",
+    y      = "Density",
+    color  = "Threshold",
+    shape  = "Threshold"
+  ) +
+  theme(legend.position = "bottom")
+
+print(p4_wright)
+ggsave("results/plot4_wright_map.pdf", p4_wright, width = 12, height = 7)
+```
+
+```{r}
+# Plot 5: Person Fit
+p5 <- personfitPlot(fit_grm) +
+  labs(title = "Person Fit Statistics")
+print(p5)
+ggsave("results/plot5_person_fit.pdf", p5, width = 10, height = 6)
+```
+
+```{r}
+# Plot 6: Item Fit
+p6 <- itemfitPlot(fit_grm) +
+  labs(title = "Item Fit Statistics")
+print(p6)
+ggsave("results/plot6_item_fit.pdf", p6, width = 10, height = 6)
+```
+
+```{r}
+# Plot 7: Theta density by country
+p7 <- ggplot(data_complete, aes(x = theta_grm, fill = country_code)) +
+  geom_density(alpha = 0.6) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  scale_fill_country() +
+  labs(
+    title = "Distribution of Latent Acceptance by Country",
+    x     = "Theta (Latent Acceptance)",
+    y     = "Density",
+    fill  = "Country"
+  ) +
+  theme(legend.position = "top")
+
+print(p7)
+ggsave("results/plot7_theta_density.pdf", p7, width = 10, height = 6)
+```
+
+```{r}
+# Plot 8: Theta boxplot by country
+p8 <- ggplot(data_complete,
+             aes(x = country_code, y = theta_grm, fill = country_code)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  scale_fill_country() +
+  labs(
+    title = "Latent Acceptance by Country",
+    x     = "Country",
+    y     = "Theta (Latent Acceptance)"
+  ) +
+  theme(legend.position = "none")
+
+print(p8)
+ggsave("results/plot8_theta_boxplot.pdf", p8, width = 8, height = 6)
+```
+
+```{r}
+# Plot 9: Item difficulty hierarchy
+difficulty_data <- data.frame(
+  item           = rownames(item_params),
+  difficulty     = item_params$b1,
+  discrimination = item_params$a
+) %>%
+  arrange(difficulty) %>%
+  mutate(item = factor(item, levels = item))
+
+p9 <- ggplot(difficulty_data, aes(x = difficulty, y = item)) +
+  geom_point(aes(size = discrimination),
+             color = unname(palette_thesis["slate"]), alpha = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed",
+             color = unname(palette_thesis["rose"])) +
+  labs(
+    title    = "Item Difficulty Hierarchy",
+    subtitle = "First threshold (b1); larger points = higher discrimination",
+    x        = "Difficulty (b1)",
+    y        = NULL,
+    size     = "Discrimination"
+  )
+
+print(p9)
+ggsave("results/plot9_item_difficulty.pdf", p9, width = 10, height = 12)
+```
+
+## Model 2: Partial Credit Model (PCM)
+
+```{r}
+fit_pcm <- mirt(
+  data     = items,
+  model    = 1,
+  itemtype = "Rasch",
+  SE       = TRUE,
+  verbose  = FALSE
+)
+```
+
+```{r}
+# PCM model fit
+fit_pcm_stats <- M2(fit_pcm)
+cat("PCM RMSEA =", round(fit_pcm_stats$RMSEA, 4), "\n")
+cat("PCM CFI   =", round(fit_pcm_stats$CFI, 4), "\n")
+```
+
+## GRM vs PCM Comparison
+
+```{r}
+comparison <- anova(fit_grm, fit_pcm)
+print(comparison)
+
+aic_diff <- comparison$AIC[1] - comparison$AIC[2]
+cat("ΔAIC (GRM - PCM):", round(aic_diff, 1), "\n")
+
+best_1d_model <- ifelse(aic_diff < -4, "GRM", "PCM")
+cat("Preferred model:", best_1d_model, "\n")
+
+write.csv(as.data.frame(comparison), "results/model_comparison_grm_pcm.csv",
+          row.names = FALSE)
+```
+
+## Save Results
+
+```{r}
+# Save dataset with theta scores
+final_data <- data_all %>%
+  left_join(
+    data_complete %>% select(id, theta_grm),
+    by = c("uuid" = "id")
+  )
+
+write.csv(final_data, "results/data_with_theta.csv", row.names = FALSE)
+saveRDS(final_data,   "results/data_with_theta.rds")
+saveRDS(fit_grm,      "results/fit_grm.rds")
+saveRDS(fit_pcm,      "results/fit_pcm.rds")
+
+cat("Saved: data_with_theta, fit_grm, fit_pcm\n")
+cat("Rows:", nrow(final_data), "\n")
+```

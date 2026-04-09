@@ -1,0 +1,252 @@
+---
+title: "Clustering Analysis"
+format: html
+editor: visual
+---
+
+```{r}
+source("source.R")
+library(cluster)
+library(patchwork)
+```
+
+## Load Data
+
+```{r}
+final_data <- readRDS("results/data_final_all_thetas.rds")
+
+clust_data <- final_data %>%
+  filter(complete.cases(theta_service, theta_information, theta_data,
+                        concern_privacy, country_code, gender, education))
+
+theta_mat <- clust_data %>%
+  select(theta_service, theta_information, theta_data) %>%
+  as.matrix()
+
+cat("Clustering sample:", nrow(clust_data), "respondents\n")
+```
+
+## Select Number of Clusters
+
+```{r}
+set.seed(42)
+wss     <- sapply(2:8, function(k) kmeans(theta_mat, k, nstart = 25, iter.max = 100)$tot.withinss)
+sil_avg <- sapply(2:8, function(k) {
+  km <- kmeans(theta_mat, k, nstart = 25, iter.max = 100)
+  mean(silhouette(km$cluster, dist(theta_mat))[, "sil_width"])
+})
+
+sel_df <- tibble(k = 2:8, wss = wss, silhouette = sil_avg)
+
+p_elbow <- ggplot(sel_df, aes(x = k, y = wss)) +
+  geom_line(color = unname(palette_thesis["slate"]), linewidth = 1) +
+  geom_point(size = 3, color = unname(palette_thesis["slate"])) +
+  labs(title = "Elbow Plot", x = "k", y = "Within-Cluster SS")
+
+p_sil <- ggplot(sel_df, aes(x = k, y = silhouette)) +
+  geom_line(color = unname(palette_thesis["teal"]), linewidth = 1) +
+  geom_point(size = 3, color = unname(palette_thesis["teal"])) +
+  labs(title = "Silhouette Width", x = "k", y = "Avg. Silhouette")
+
+print(p_elbow / p_sil)
+ggsave("results/plot_cluster_selection.pdf", p_elbow / p_sil, width = 8, height = 8)
+```
+
+## Fit k = 3
+
+```{r}
+set.seed(42)
+km3 <- kmeans(theta_mat, centers = 3, nstart = 50, iter.max = 200)
+clust_data$cluster <- factor(km3$cluster)
+
+cat("Cluster sizes:\n")
+print(table(clust_data$cluster))
+
+# Label clusters by overall acceptance level (lowest to highest)
+rank_order <- order(rowMeans(km3$centers))
+label_vec  <- character(3)
+label_vec[rank_order[1]] <- "Privacy-Sensitive"
+label_vec[rank_order[2]] <- "Moderate"
+label_vec[rank_order[3]] <- "Privacy-Permissive"
+
+clust_data$profile <- factor(
+  label_vec[as.integer(clust_data$cluster)],
+  levels = c("Privacy-Sensitive", "Moderate", "Privacy-Permissive")
+)
+
+prof_pal <- c(
+  "Privacy-Sensitive"  = unname(palette_thesis["rose"]),
+  "Moderate"           = unname(palette_thesis["sand"]),
+  "Privacy-Permissive" = unname(palette_thesis["teal"])
+)
+```
+
+## Cluster Profiles
+
+```{r}
+# Centroid line plot
+centroids <- as.data.frame(km3$centers)
+colnames(centroids) <- c("Service", "Information", "Data")
+centroids$profile   <- factor(label_vec, levels = names(prof_pal))
+
+p_centroids <- centroids %>%
+  pivot_longer(-profile, names_to = "Dimension", values_to = "Theta") %>%
+  ggplot(aes(x = Dimension, y = Theta, group = profile, color = profile)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 4) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual(values = prof_pal) +
+  labs(title   = "Acceptance Profiles: Cluster Centroids",
+       x = "Dimension", y = "Mean \u03b8", color = "Profile",
+       caption = "Higher \u03b8 = greater acceptance of personalization")
+
+print(p_centroids)
+ggsave("results/plot_cluster_centroids.pdf", p_centroids, width = 8, height = 6)
+```
+
+```{r}
+# Scatter plot: respondents in theta space
+p_scatter <- ggplot(clust_data,
+                    aes(x = theta_service, y = theta_data, color = profile)) +
+  geom_point(alpha = 0.2, size = 0.8) +
+  stat_ellipse(level = 0.68, linewidth = 1) +
+  scale_color_manual(values = prof_pal) +
+  labs(title   = "Clusters in Theta Space (Service \u00d7 Data)",
+       x = "\u03b8 Service", y = "\u03b8 Data", color = "Profile",
+       caption = "Ellipses = 68% density contour per cluster")
+
+print(p_scatter)
+ggsave("results/plot_cluster_scatter.pdf", p_scatter, width = 9, height = 7)
+```
+
+## Validation
+
+```{r}
+# Chi-square tests for country, gender, education
+chisq_country <- chisq.test(table(clust_data$country_code, clust_data$profile))
+cat("Country:   X\u00b2 =", round(chisq_country$statistic, 2),
+    " p =", format.pval(chisq_country$p.value, digits = 3), "\n")
+
+clust_data$gender_label <- ifelse(
+  tolower(as.character(clust_data$gender)) %in% c("female", "woman"), "Female", "Male/Other"
+)
+chisq_gender <- chisq.test(table(clust_data$gender_label, clust_data$profile))
+cat("Gender:    X\u00b2 =", round(chisq_gender$statistic, 2),
+    " p =", format.pval(chisq_gender$p.value, digits = 3), "\n")
+
+chisq_edu <- chisq.test(table(clust_data$education, clust_data$profile))
+cat("Education: X\u00b2 =", round(chisq_edu$statistic, 2),
+    " p =", format.pval(chisq_edu$p.value, digits = 3), "\n")
+
+# ANOVA for privacy concern
+clust_data$concern_num <- as.numeric(clust_data$concern_privacy)
+aov_concern <- aov(concern_num ~ profile, data = clust_data)
+f_val <- summary(aov_concern)[[1]][["F value"]][1]
+p_val <- summary(aov_concern)[[1]][["Pr(>F)"]][1]
+cat("Concern:    F =", round(f_val, 2),
+    " p =", format.pval(p_val, digits = 3), "\n")
+```
+
+```{r}
+# Country distribution by profile
+p_country <- clust_data %>%
+  count(country_code, profile) %>%
+  group_by(country_code) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = country_code, y = pct, fill = profile)) +
+  geom_col(position = "fill") +
+  scale_fill_manual(values = prof_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title   = "Acceptance Profile by Country",
+       x = "Country", y = "Share", fill = "Profile",
+       caption = paste0("Chi-square p = ",
+                        format.pval(chisq_country$p.value, digits = 3)))
+
+print(p_country)
+ggsave("results/plot_cluster_country.pdf", p_country, width = 8, height = 5)
+```
+
+```{r}
+# Privacy concern by profile
+p_concern <- ggplot(clust_data %>% filter(!is.na(concern_num)),
+                    aes(x = profile, y = concern_num, fill = profile)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+  scale_fill_manual(values = prof_pal) +
+  labs(title   = "Privacy Concern by Acceptance Profile",
+       x = NULL, y = "Privacy Concern (1\u20134)",
+       caption = paste0("ANOVA F = ", round(f_val, 2),
+                        ", p ", format.pval(p_val, digits = 3))) +
+  theme(legend.position = "none")
+
+print(p_concern)
+ggsave("results/plot_cluster_concern.pdf", p_concern, width = 8, height = 5)
+```
+
+## Profile Demographics
+
+```{r}
+clust_data <- clust_data %>%
+  mutate(
+    age_num       = as.numeric(age),
+    education_num = as.numeric(education)
+  )
+
+# Age by profile
+age_profile <- clust_data %>%
+  group_by(profile) %>%
+  summarise(mean_age = round(mean(age_num, na.rm = TRUE), 1),
+            sd_age   = round(sd(age_num,   na.rm = TRUE), 1))
+cat("Age by profile:\n")
+print(age_profile)
+
+# Gender by profile
+cat("\nGender by profile:\n")
+table(clust_data$profile, clust_data$gender_label) %>%
+  prop.table(margin = 1) %>% round(3) %>% print()
+
+# Education by profile
+edu_profile <- clust_data %>%
+  group_by(profile) %>%
+  summarise(mean_edu = round(mean(education_num, na.rm = TRUE), 2))
+cat("\nEducation by profile:\n")
+print(edu_profile)
+
+# Country by profile
+cat("\nCountry by profile:\n")
+country_profile_table <- table(clust_data$country_code, clust_data$profile) %>%
+  prop.table(margin = 1) %>% round(3)
+print(country_profile_table)
+
+write.csv(as.data.frame(country_profile_table), "results/cluster_by_country.csv",  row.names = FALSE)
+write.csv(age_profile,                           "results/cluster_age.csv",         row.names = FALSE)
+write.csv(edu_profile,                           "results/cluster_education.csv",   row.names = FALSE)
+```
+
+## Combined Summary Plot
+
+```{r}
+p_combined <- (p_centroids | p_country) / (p_scatter | p_concern)
+
+p_combined + plot_annotation(
+  title    = "Acceptance Profile Clustering Summary",
+  subtitle = "K-means, k = 3, on 3D theta scores (N = 3,216)",
+  theme    = theme(plot.title    = element_text(size = 14, face = "bold"),
+                   plot.subtitle = element_text(size = 11))
+)
+
+ggsave("results/plot_cluster_summary.pdf", p_combined, width = 14, height = 12)
+```
+
+## Save Cluster Assignments
+
+```{r}
+write.csv(
+  clust_data %>% select(uuid, cluster, profile),
+  "results/cluster_assignments.csv",
+  row.names = FALSE
+)
+
+cat("Saved: results/cluster_assignments.csv\n")
+cat("Profile counts:\n")
+print(table(clust_data$profile))
+```

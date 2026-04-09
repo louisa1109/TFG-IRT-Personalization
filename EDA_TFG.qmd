@@ -1,0 +1,525 @@
+---
+title: "Exploratory Data Analysis"
+format: html
+editor: visual
+---
+
+```{r}
+source("source.R")
+```
+
+## Load Data
+
+```{r}
+bundle <- readRDS("data/bundle.rds")
+
+data_all            <- bundle$data_all
+items               <- bundle$dict
+accept_vars         <- bundle$acceptability_vars
+accept_service_vars <- bundle$accept_service_vars
+accept_info_vars    <- bundle$accept_info_vars
+accept_data_vars    <- bundle$accept_data_vars
+privacy_vars        <- bundle$privacy_vars
+country_var         <- bundle$country_var
+
+stopifnot(country_var %in% names(data_all))
+stopifnot(all(accept_vars %in% names(data_all)))
+
+# Numeric version of acceptability items (used throughout)
+acc_numeric <- data_all %>%
+  select(all_of(accept_vars)) %>%
+  mutate(across(everything(), ~ as.numeric(.x)))
+```
+
+```{r}
+head (data_all)
+```
+
+```{r}
+colnames(data_all)
+```
+
+## Block 1: Sample Overview
+
+```{r}
+# Dimensions and summary
+dim(data_all)
+summary(data_all)
+```
+
+```{r}
+# N per country
+data_all %>%
+  count(country_code, name = "N") %>%
+  arrange(desc(N))
+```
+
+```{r}
+# Demographic snapshot by country
+data_all %>%
+  group_by(country_code) %>%
+  summarise(
+    N            = n(),
+    mean_age     = round(mean(age, na.rm = TRUE), 1),
+    pct_female   = round(mean(gender == "female", na.rm = TRUE) * 100, 1),
+    pct_high_edu = round(mean(education_split == "high", na.rm = TRUE) * 100, 1)
+  )
+```
+
+## Block 2: Missing Data
+
+```{r}
+miss_tbl <- tibble(
+  variable = names(data_all),
+  miss_pct = sapply(data_all, function(x) mean(is.na(x)) * 100)
+) %>%
+  arrange(desc(miss_pct))
+
+# Show only variables with missing values
+miss_tbl %>% filter(miss_pct > 0)
+```
+
+## Block 3: Demographic Visuals
+
+```{r}
+# N by country
+n_by_country <- data_all %>%
+  count(country_code, name = "N") %>%
+  arrange(desc(N))
+
+n_by_country
+```
+
+```{r}
+# Age distribution by country
+ggplot(data_all, aes(age, fill = country_code)) +
+  geom_histogram(binwidth = 5, position = "dodge") +
+  scale_fill_country() +
+  labs(
+    title   = "Age Distribution by Country",
+    x       = "Age",
+    y       = "Count"
+  )
+```
+
+```{r}
+# Education by country
+ggplot(data_all, aes(education_split, fill = country_code)) +
+  geom_bar(position = "dodge") +
+  scale_fill_country() +
+  labs(
+    title   = "Education by Country",
+    x       = NULL,
+    y       = "Count"
+  )
+```
+
+## Block 4: Distributional Properties
+
+```{r}
+# Skewness and kurtosis per item
+skew_kurt <- psych::describe(acc_numeric) %>%
+  as.data.frame() %>%
+  select(mean, sd, skew, kurtosis) %>%
+  mutate(
+    item      = rownames(.),
+    dimension = case_when(
+      item %in% accept_service_vars ~ "Service",
+      item %in% accept_info_vars    ~ "Information",
+      item %in% accept_data_vars    ~ "Data"
+    )
+  )
+```
+
+```{r}
+# Skewness/kurtosis table
+skew_kurt %>%
+  select(item, dimension, mean, sd, skew, kurtosis) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 2))) %>%
+  arrange(dimension, mean)
+```
+
+```{r}
+# Skewness plot
+ggplot(skew_kurt, aes(x = skew, y = reorder(item, skew), color = dimension)) +
+  geom_point(size = 3, alpha = 0.85) +
+  geom_vline(xintercept =  0, linetype = "dashed", color = "gray40") +
+  geom_vline(xintercept =  1, linetype = "dotted",
+             color = unname(palette_thesis["rose"])) +
+  geom_vline(xintercept = -1, linetype = "dotted",
+             color = unname(palette_thesis["rose"])) +
+  scale_colour_dimension() +
+  labs(
+    title   = "Skewness of Acceptability Items by Dimension",
+    x       = "Skewness",
+    y       = NULL,
+    color   = "Dimension"
+  )
+```
+
+```{r}
+# Count items with substantial skewness
+skew_kurt %>% filter(skew > 0.5) %>% nrow()
+```
+
+## Block 5: Acceptability Overview
+
+```{r}
+# Reshape to long format
+accept_long <- data_all %>%
+  select(all_of(accept_vars)) %>%
+  pivot_longer(everything(), names_to = "item", values_to = "response") %>%
+  filter(!is.na(response)) %>%
+  mutate(
+    item     = factor(item, levels = rev(accept_vars)),
+    response = factor(as.character(response),
+                      levels = c("Not acceptable at all", "Not very acceptable",
+                                 "Somewhat acceptable", "Very acceptable"),
+                      ordered = TRUE)
+  )
+
+accept_summary <- accept_long %>%
+  count(item, response, name = "n") %>%
+  group_by(item) %>%
+  mutate(pct = n / sum(n)) %>%
+  ungroup()
+```
+
+```{r}
+accept_summary
+```
+
+```{r}
+# Stacked bar: full acceptability overview
+ggplot(accept_summary, aes(x = pct, y = item, fill = response)) +
+  geom_col(width = 0.85) +
+  scale_fill_response() +
+  scale_x_continuous(labels = scales::percent_format()) +
+  labs(
+    title   = "Acceptability of Data Use Across Contexts",
+    x       = "Share of respondents",
+    y       = NULL,
+    fill    = "Response"
+  )
+```
+
+```{r}
+# Commercial vs political personalization by country
+item_palette <- c(
+  "commercials"         = unname(palette_thesis["teal"]),
+  "political_campaigns" = unname(palette_thesis["rose"])
+)
+
+data_all %>%
+  select(country_code, commercials, political_campaigns) %>%
+  pivot_longer(cols = c(commercials, political_campaigns),
+               names_to = "item", values_to = "response") %>%
+  filter(!is.na(response)) %>%
+  group_by(country_code, item, response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(country_code, item) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = response, y = pct, fill = item)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ country_code) +
+  scale_fill_manual(values = item_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title   = "Commercial vs Political Personalization by Country",
+    x       = NULL,
+    y       = "Share of respondents",
+    fill    = "Item"
+  ) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+```
+
+```{r}
+# Mean acceptability by country and item
+accept_num <- data_all %>%
+  mutate(across(all_of(accept_vars), ~ as.numeric(.x)))
+
+country_item_means <- accept_num %>%
+  select(country_code, all_of(accept_vars)) %>%
+  pivot_longer(cols = all_of(accept_vars),
+               names_to = "item", values_to = "score") %>%
+  group_by(country_code, item) %>%
+  summarise(mean_score = mean(score, na.rm = TRUE), .groups = "drop")
+
+ggplot(country_item_means,
+       aes(x = mean_score, y = item, colour = country_code)) +
+  geom_point(size = 2) +
+  scale_colour_country() +
+  labs(
+    title   = "Average Acceptability by Country (1 = Not acceptable, 4 = Very acceptable)",
+    x       = "Mean acceptability",
+    y       = NULL,
+    colour  = "Country"
+  ) + 
+  theme(
+      axis.text.x  = element_text(angle = 20, hjust = 1, size = 18),
+      axis.text.y  = element_text(size = 20),
+      axis.title   = element_text(size = 20),
+      plot.title   = element_text(size = 20),
+      legend.text   = element_text(size = 16),
+      legend.title  = element_text(size = 18)
+    )
+```
+
+## Block 6: Relationships Motivating Models
+
+```{r}
+# Privacy concern distribution
+data_all %>%
+  count(concern_privacy) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = concern_privacy, y = pct)) +
+  geom_col(fill = unname(palette_thesis["mauve"]), alpha = 0.85) +
+  geom_text(aes(label = scales::percent(pct, accuracy = 1)),
+            vjust = -0.5, size = 3.5) +
+  scale_y_continuous(labels = scales::percent_format(),
+                     expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title   = "Distribution of Privacy Concern",
+    x       = "Privacy Concern",
+    y       = "Share of respondents"
+  ) +
+  theme(
+    axis.text.x  = element_text(angle = 20, hjust = 1, size = 13),
+    axis.text.y  = element_text(size = 13),
+    axis.title   = element_text(size = 14),
+    plot.title   = element_text(size = 16)
+  )
+```
+
+```{r}
+# Privacy concern vs mean acceptability
+data_all %>%
+  mutate(
+    mean_accept = rowMeans(
+      select(., all_of(accept_vars)) %>%
+        mutate(across(everything(), as.numeric)),
+      na.rm = TRUE
+    )
+  ) %>%
+  filter(!is.na(concern_privacy)) %>%
+  ggplot(aes(x = concern_privacy, y = mean_accept)) +
+  geom_boxplot(fill = unname(palette_thesis["teal"]),
+               alpha = 0.6, outlier.alpha = 0.2) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE,
+              color = unname(palette_thesis["rose"]),
+              linetype = "dashed") +
+  labs(
+    title   = "Privacy Concern vs Mean Acceptability",
+    x       = "Privacy Concern",
+    y       = "Mean Acceptability (1-4)"
+  ) +
+  theme(
+    axis.text.x  = element_text(angle = 20, hjust = 1, size = 13),
+    axis.text.y  = element_text(size = 13),
+    axis.title   = element_text(size = 14),
+    plot.title   = element_text(size = 16)
+  )
+```
+
+```{r}
+# Political personalization acceptability by privacy concern level
+data_all %>%
+  select(concern_privacy, political_campaigns) %>%
+  filter(!is.na(political_campaigns)) %>%
+  count(concern_privacy, political_campaigns) %>%
+  group_by(concern_privacy) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = concern_privacy, y = pct, fill = political_campaigns)) +
+  geom_col() +
+  scale_fill_response() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title   = "Political Personalization Acceptability by Privacy Concern",
+    x       = "Privacy Concern",
+    y       = "Share",
+    fill    = "Acceptability"
+  ) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+```
+
+```{r}
+names(data_all)[grep("rec|sys", names(data_all), ignore.case = TRUE)]
+```
+
+
+```{r}
+# Algorithmic awareness by country
+# Note: RecSys becomes "recsys" after janitor::make_clean_names
+awareness_vars <- c("ai", "algorithms", "ml", "rec_sys", "targeted")
+
+data_all %>%
+  select(country_code, all_of(awareness_vars)) %>%
+  pivot_longer(cols = all_of(awareness_vars),
+               names_to = "term", values_to = "aware") %>%
+  mutate(
+    aware = as.numeric(aware == TRUE),
+    term  = recode(term,
+      "ai"         = "Artificial Intelligence",
+      "algorithms" = "Algorithms",
+      "ml"         = "Machine Learning",
+      "rec_sys"     = "Recommender Systems",
+      "targeted"   = "Targeted Advertising"
+    )
+  ) %>%
+  group_by(country_code, term) %>%
+  summarise(pct_aware = mean(aware, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = reorder(term, pct_aware), y = pct_aware, fill = country_code)) +
+  geom_col(position = "dodge", alpha = 0.85) +
+  scale_fill_country() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  coord_flip() +
+  labs(
+    title   = "Algorithmic Awareness by Country",
+    x       = NULL,
+    y       = "Share aware",
+    fill    = "Country"
+  )
+```
+
+```{r}
+# AI familiarity vs mean acceptability per context
+data_all %>%
+  group_by(ai) %>%
+  summarise(
+    `Political campaigns`       = mean(as.numeric(political_campaigns), na.rm = TRUE),
+    `Customised search results` = mean(as.numeric(customised_search_results), na.rm = TRUE),
+    `Entertainment recs`        = mean(as.numeric(personalised_entertainment_recommendations), na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+# Political leaning vs acceptability
+data_all %>%
+  group_by(political_split) %>%
+  summarise(
+    `Political campaigns` = mean(as.numeric(political_campaigns), na.rm = TRUE),
+    `Commercials`         = mean(as.numeric(commercials), na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## Block 7: Correlation Structure
+
+```{r}
+poly_corr <- psych::polychoric(acc_numeric)$rho
+
+corr_long <- as.data.frame(as.table(poly_corr)) %>%
+  rename(item1 = Var1, item2 = Var2, r = Freq)
+```
+
+```{r}
+corr_long
+```
+
+```{r}
+# Within- vs between-dimension correlation summary
+get_mean_corr <- function(corr_matrix, items1, items2 = NULL) {
+  if (is.null(items2)) items2 <- items1
+  subset_corr <- corr_matrix[items1, items2]
+  if (identical(items1, items2)) {
+    subset_corr[lower.tri(subset_corr, diag = TRUE)] <- NA
+  }
+  mean(subset_corr, na.rm = TRUE)
+}
+
+tibble(
+  Comparison = c(
+    "Within: Service",
+    "Within: Information",
+    "Within: Data",
+    "Cross: Service x Information",
+    "Cross: Service x Data",
+    "Cross: Information x Data"
+  ),
+  Mean_r = round(c(
+    get_mean_corr(poly_corr, accept_service_vars),
+    get_mean_corr(poly_corr, accept_info_vars),
+    get_mean_corr(poly_corr, accept_data_vars),
+    get_mean_corr(poly_corr, accept_service_vars, accept_info_vars),
+    get_mean_corr(poly_corr, accept_service_vars, accept_data_vars),
+    get_mean_corr(poly_corr, accept_info_vars,    accept_data_vars)
+  ), 2)
+)
+
+```
+
+```{r}
+# Polychoric correlation heatmap
+ggplot(corr_long, aes(x = item1, y = item2, fill = r)) +
+  geom_tile() +
+  scale_fill_gradient2(limits   = c(-1, 1),
+                       low      = unname(palette_thesis["rose"]),
+                       mid      = "white",
+                       high     = unname(palette_thesis["teal"])) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(
+    title   = "Polychoric Correlation Heatmap (Acceptability Items)",
+    x       = NULL,
+    y       = NULL,
+    fill    = "\u03c1"
+  ) +
+  theme(
+    axis.text.x  = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 18),
+    axis.text.y  = element_text(size = 20),
+    plot.title   = element_text(size = 20),
+    legend.text  = element_text(size = 20),
+    legend.title = element_text(size = 20)
+  )
+```
+
+## Block 8: Internal Consistency and Factor Structure
+
+```{r}
+# Cronbach alpha per dimension
+alpha_overall <- psych::alpha(acc_numeric)$total$raw_alpha
+alpha_service <- psych::alpha(acc_numeric %>% select(all_of(accept_service_vars)))$total$raw_alpha
+alpha_info    <- psych::alpha(acc_numeric %>% select(all_of(accept_info_vars)))$total$raw_alpha
+alpha_data    <- psych::alpha(acc_numeric %>% select(all_of(accept_data_vars)))$total$raw_alpha
+
+tibble(
+  Scale          = c("Overall", "Service", "Information", "Data"),
+  N_items        = c(length(accept_vars), length(accept_service_vars),
+                     length(accept_info_vars), length(accept_data_vars)),
+  Cronbach_alpha = round(c(alpha_overall, alpha_service,
+                            alpha_info, alpha_data), 3)
+)
+```
+
+```{r}
+# Parallel analysis: empirical justification for number of factors
+set.seed(42)
+fa_parallel <- psych::fa.parallel(
+  acc_numeric,
+  fa     = "fa",
+  n.iter = 20,
+  main   = "Parallel Analysis: Number of Factors"
+)
+```
+
+```{r}
+# Exploratory factor analysis: check if 3-factor structure emerges
+set.seed(42)
+fa_result <- psych::fa(
+  acc_numeric,
+  nfactors = 3,
+  rotate   = "oblimin",
+  fm       = "ml"
+)
+
+# Item loadings
+print(fa_result$loadings, cutoff = 0.3)
+
+# Variance explained
+cat("\nVariance explained:\n")
+print(fa_result$Vx)
+
+# Factor correlations
+cat("\nFactor correlations:\n")
+print(fa_result$Phi)
+```
